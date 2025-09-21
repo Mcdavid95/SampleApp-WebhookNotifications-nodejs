@@ -1,12 +1,14 @@
 import { Request } from 'express';
 import { WebhookEventNotification } from '../types/quickbooks.types';
+import { FirsService } from '../firs/firs.service';
 export declare class QuickBooksService {
+    private readonly firsService;
     private config;
     private tokenJson;
     private realmId;
     private webhookPayload;
     private csrf;
-    constructor();
+    constructor(firsService: FirsService);
     setTokensForTesting(accessToken: string, refreshToken: string, realmId: string): void;
     private loadTokensFromFile;
     private saveTokensToFile;
@@ -28,4 +30,6 @@ export declare class QuickBooksService {
     private writeEnrichedNotificationsToCsv;
     private writeNotificationToCsv;
     createCustomer(displayName: string): Promise<any>;
+    private submitInvoiceToFirs;
+    private handleDeletedInvoiceInFirs;
 }

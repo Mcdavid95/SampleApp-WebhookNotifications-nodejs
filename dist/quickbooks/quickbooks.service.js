@@ -19,8 +19,10 @@ const request = require("request");
 const QuickBooks = require('node-quickbooks');
 const json2csv = require("json2csv");
 const Tokens = require("csrf");
+const firs_service_1 = require("../firs/firs.service");
 let QuickBooksService = class QuickBooksService {
-    constructor() {
+    constructor(firsService) {
+        this.firsService = firsService;
         this.csrf = new Tokens();
         this.loadConfig();
         this.loadTokensFromFile();
@@ -273,6 +275,9 @@ let QuickBooksService = class QuickBooksService {
                         baseNotification.fullData = fullData;
                         baseNotification.fetchStatus = 'success';
                         console.log(`Successfully fetched full data for ${entity.name} ID: ${entity.id}`);
+                        if (entity.name === 'Invoice') {
+                            await this.submitInvoiceToFirs(fullData, entity.operation);
+                        }
                     }
                     catch (error) {
                         baseNotification.fetchStatus = 'failed';
@@ -283,6 +288,9 @@ let QuickBooksService = class QuickBooksService {
                 else if (entity.operation === 'Delete') {
                     baseNotification.fetchStatus = 'skipped';
                     console.log(`Skipped fetching data for deleted ${entity.name} ID: ${entity.id}`);
+                    if (entity.name === 'Invoice') {
+                        await this.handleDeletedInvoiceInFirs(entity.id);
+                    }
                 }
                 enrichedNotifications.push(baseNotification);
                 console.log('Enriched notification:', baseNotification);
@@ -415,10 +423,40 @@ let QuickBooksService = class QuickBooksService {
             });
         });
     }
+    async submitInvoiceToFirs(invoiceData, operation) {
+        try {
+            console.log(`Submitting invoice to FIRS: ${invoiceData.Id}, Operation: ${operation}`);
+            let firsResponse;
+            if (operation === 'Create') {
+                firsResponse = await this.firsService.submitInvoice(invoiceData);
+            }
+            else if (operation === 'Update') {
+                firsResponse = await this.firsService.submitInvoice(invoiceData);
+            }
+            if (firsResponse && firsResponse.code >= 200 && firsResponse.code < 300) {
+                console.log(`FIRS submission successful: ${firsResponse.reference || firsResponse.message}`);
+            }
+            else {
+                console.error(`FIRS submission failed: ${firsResponse?.message || 'Unknown error'}`);
+            }
+        }
+        catch (error) {
+            console.error(`Error submitting invoice to FIRS:`, error.message);
+        }
+    }
+    async handleDeletedInvoiceInFirs(invoiceId) {
+        try {
+            console.log(`Handling deleted invoice in FIRS: ${invoiceId}`);
+            console.log(`Invoice ${invoiceId} was deleted - would need to cancel in FIRS with proper IRN`);
+        }
+        catch (error) {
+            console.error(`Error handling deleted invoice in FIRS:`, error.message);
+        }
+    }
 };
 exports.QuickBooksService = QuickBooksService;
 exports.QuickBooksService = QuickBooksService = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [])
+    __metadata("design:paramtypes", [firs_service_1.FirsService])
 ], QuickBooksService);
 //# sourceMappingURL=quickbooks.service.js.map

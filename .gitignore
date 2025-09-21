@@ -9,3 +9,4 @@ file.csv
 .DS_Store
 .idea/
 config.json
+dist/

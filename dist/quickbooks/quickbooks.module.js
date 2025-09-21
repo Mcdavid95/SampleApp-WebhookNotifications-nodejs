@@ -9,11 +9,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.QuickBooksModule = void 0;
 const common_1 = require("@nestjs/common");
 const quickbooks_service_1 = require("./quickbooks.service");
+const firs_module_1 = require("../firs/firs.module");
 let QuickBooksModule = class QuickBooksModule {
 };
 exports.QuickBooksModule = QuickBooksModule;
 exports.QuickBooksModule = QuickBooksModule = __decorate([
     (0, common_1.Module)({
+        imports: [firs_module_1.FirsModule],
         providers: [quickbooks_service_1.QuickBooksService],
         exports: [quickbooks_service_1.QuickBooksService],
     })
