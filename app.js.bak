@@ -219,6 +219,6 @@ app.post('/createCustomer', urlencodedParser, function(req, res) {
 
 
 // Start server on HTTP (will use ngrok for HTTPS forwarding)
-app.listen(8000, function () {
-    console.log('Example app listening on port 8000!')
+app.listen(8443, function () {
+    console.log('Example app listening on port 8443!')
 })
