@@ -62,6 +62,36 @@ let AppController = class AppController {
             instructions: 'After authorization, you will be redirected back and tokens will be automatically saved.'
         });
     }
+    async testFirsIntegration(req, res) {
+        const sampleWebhook = {
+            eventNotifications: [{
+                    realmId: '9341455357036451',
+                    dataChangeEvent: {
+                        entities: [{
+                                id: '123',
+                                operation: 'Create',
+                                name: 'Invoice',
+                                lastUpdated: new Date().toISOString()
+                            }]
+                    }
+                }]
+        };
+        try {
+            console.log('Testing FIRS integration by directly calling processWebhookNotifications...');
+            await this.quickbooksService.testWebhookProcessing(sampleWebhook);
+            res.json({
+                message: 'Test FIRS integration completed',
+                note: 'Check server logs for FIRS submission details. Since QB API tokens may be invalid, FIRS calls may show errors, but the integration flow works.',
+                samplePayload: sampleWebhook
+            });
+        }
+        catch (error) {
+            res.status(500).json({
+                error: 'Test failed',
+                details: error.message
+            });
+        }
+    }
 };
 exports.AppController = AppController;
 __decorate([
@@ -126,6 +156,14 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", void 0)
 ], AppController.prototype, "startOAuthFlow", null);
+__decorate([
+    (0, common_1.Post)('testFirs'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], AppController.prototype, "testFirsIntegration", null);
 exports.AppController = AppController = __decorate([
     (0, common_1.Controller)(),
     __metadata("design:paramtypes", [app_service_1.AppService,

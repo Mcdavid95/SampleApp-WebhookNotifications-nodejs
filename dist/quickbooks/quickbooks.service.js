@@ -453,6 +453,10 @@ let QuickBooksService = class QuickBooksService {
             console.error(`Error handling deleted invoice in FIRS:`, error.message);
         }
     }
+    async testWebhookProcessing(body) {
+        console.log('Testing webhook processing with FIRS integration...');
+        await this.processWebhookNotifications(body);
+    }
 };
 exports.QuickBooksService = QuickBooksService;
 exports.QuickBooksService = QuickBooksService = __decorate([

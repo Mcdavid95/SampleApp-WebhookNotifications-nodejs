@@ -24,4 +24,5 @@ export declare class AppController {
         realmId: string;
     }, res: Response): void;
     startOAuthFlow(res: Response): void;
+    testFirsIntegration(req: Request, res: Response): Promise<void>;
 }

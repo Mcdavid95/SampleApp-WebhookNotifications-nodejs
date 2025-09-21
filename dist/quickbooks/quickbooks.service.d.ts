@@ -32,4 +32,5 @@ export declare class QuickBooksService {
     createCustomer(displayName: string): Promise<any>;
     private submitInvoiceToFirs;
     private handleDeletedInvoiceInFirs;
+    testWebhookProcessing(body: WebhookEventNotification): Promise<void>;
 }
