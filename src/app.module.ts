@@ -5,6 +5,8 @@ import { join } from 'path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { QuickBooksModule } from './quickbooks/quickbooks.module';
+import { FirsModule } from './firs/firs.module';
+import { CompanyModule } from './company/company.module';
 
 @Module({
   imports: [
@@ -17,6 +19,8 @@ import { QuickBooksModule } from './quickbooks/quickbooks.module';
       serveRoot: '/',
     }),
     QuickBooksModule,
+    FirsModule,
+    CompanyModule,
   ],
   controllers: [AppController],
   providers: [AppService],

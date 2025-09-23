@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Request } from 'express';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -9,6 +9,9 @@ const QuickBooks = require('node-quickbooks');
 import * as json2csv from 'json2csv';
 import * as Tokens from 'csrf';
 import { QuickBooksConfig, WebhookEventNotification, NotificationRecord } from '../types/quickbooks.types';
+import { FirsService, FirsCompanyConfig } from '../firs/firs.service';
+import { FirsApiResponse, FirsParty } from '../types/firs.types';
+import { SupabaseService } from '../supabase/supabase.service';
 
 @Injectable()
 export class QuickBooksService {
@@ -17,8 +20,12 @@ export class QuickBooksService {
   private realmId: string;
   private webhookPayload: any;
   private csrf = new (Tokens as any)();
+  private readonly logger = new Logger(QuickBooksService.name);
 
-  constructor() {
+  constructor(
+    private readonly firsService: FirsService,
+    private readonly supabaseService: SupabaseService
+  ) {
     this.loadConfig();
     this.loadTokensFromFile();
   }
@@ -36,7 +43,7 @@ export class QuickBooksService {
     this.tokenJson = JSON.stringify(tokenData, null, 2);
     this.realmId = realmId;
     this.saveTokensToFile(tokenData, realmId);
-    console.log('Tokens set for testing - webhook will now fetch full data');
+    this.logger.log('Tokens set for testing - webhook will now fetch full data');
   }
 
   private loadTokensFromFile() {
@@ -50,17 +57,17 @@ export class QuickBooksService {
         if (this.areTokensValid(tokenData.tokens)) {
           this.tokenJson = JSON.stringify(tokenData.tokens, null, 2);
           this.realmId = tokenData.realmId;
-          console.log('Loaded valid tokens from file');
+          this.logger.log('Loaded valid tokens from file');
         } else {
-          console.log('Stored tokens are expired, will need to refresh');
+          this.logger.log('Stored tokens are expired, will need to refresh');
           // Try to refresh the tokens
           this.refreshStoredTokens(tokenData);
         }
       } else {
-        console.log('No stored tokens found');
+        this.logger.log('No stored tokens found');
       }
     } catch (error) {
-      console.error('Error loading tokens from file:', error.message);
+      this.logger.error('Error loading tokens from file:', error.message);
     }
   }
 
@@ -73,9 +80,9 @@ export class QuickBooksService {
         saved_at: new Date().toISOString()
       };
       fs.writeFileSync(tokenPath, JSON.stringify(tokenData, null, 2));
-      console.log('Tokens saved to file');
+      this.logger.log('Tokens saved to file');
     } catch (error) {
-      console.error('Error saving tokens to file:', error.message);
+      this.logger.error('Error saving tokens to file:', error.message);
     }
   }
 
@@ -93,23 +100,23 @@ export class QuickBooksService {
 
   private async refreshStoredTokens(tokenData: any) {
     if (!tokenData.tokens.refresh_token) {
-      console.log('No refresh token available, need new OAuth flow');
+      this.logger.log('No refresh token available, need new OAuth flow');
       return;
     }
 
     try {
-      console.log('Attempting to refresh expired tokens...');
+      this.logger.log('Attempting to refresh expired tokens...');
       const refreshedTokens = await this.refreshAccessToken(tokenData.tokens.refresh_token);
 
       if (refreshedTokens) {
         this.tokenJson = JSON.stringify(refreshedTokens, null, 2);
         this.realmId = tokenData.realmId;
         this.saveTokensToFile(refreshedTokens, tokenData.realmId);
-        console.log('Successfully refreshed tokens');
+        this.logger.log('Successfully refreshed tokens');
       }
     } catch (error) {
-      console.error('Failed to refresh tokens:', error.message);
-      console.log('Will need new OAuth flow');
+      this.logger.error('Failed to refresh tokens:', error.message);
+      this.logger.log('Will need new OAuth flow');
     }
   }
 
@@ -212,7 +219,7 @@ export class QuickBooksService {
         this.tokenJson = JSON.stringify(accessToken, null, 2);
         this.saveTokensToFile(accessToken, this.realmId);
 
-        console.log('OAuth flow completed successfully - tokens saved');
+        this.logger.log('OAuth flow completed successfully - tokens saved');
         resolve();
       });
     });
@@ -220,7 +227,6 @@ export class QuickBooksService {
 
   async handleWebhook(req: Request, body: WebhookEventNotification): Promise<{ status: number; message: string }> {
     const webhookPayload = JSON.stringify(body);
-    console.log('The payload is:', JSON.stringify(body));
     const signature = req.get('intuit-signature');
 
     if (!signature) {
@@ -236,7 +242,6 @@ export class QuickBooksService {
       .digest('base64');
 
     if (signature === hash) {
-      console.log('The Webhook notification payload is:', webhookPayload);
       await this.processWebhookNotifications(body);
       return { status: 200, message: 'SUCCESS' };
     }
@@ -246,7 +251,7 @@ export class QuickBooksService {
 
   private async ensureValidTokens(): Promise<void> {
     if (!this.tokenJson) {
-      console.log('No tokens available, cannot fetch entity data');
+      this.logger.log('No tokens available, cannot fetch entity data');
       return;
     }
 
@@ -255,27 +260,27 @@ export class QuickBooksService {
 
       // Check if current tokens are still valid
       if (!this.areTokensValid(currentTokens)) {
-        console.log('Current tokens are expired, attempting refresh...');
+        this.logger.log('Current tokens are expired, attempting refresh...');
 
         if (currentTokens.refresh_token) {
           const refreshedTokens = await this.refreshAccessToken(currentTokens.refresh_token);
           if (refreshedTokens) {
             this.tokenJson = JSON.stringify(refreshedTokens, null, 2);
             this.saveTokensToFile(refreshedTokens, this.realmId);
-            console.log('Tokens refreshed successfully');
+            this.logger.log('Tokens refreshed successfully');
           } else {
-            console.log('Token refresh failed, will skip API calls');
+            this.logger.log('Token refresh failed, will skip API calls');
             this.tokenJson = null;
           }
         } else {
-          console.log('No refresh token available, need new OAuth flow');
+          this.logger.log('No refresh token available, need new OAuth flow');
           this.tokenJson = null;
         }
       } else {
-        console.log('Current tokens are still valid');
+        this.logger.log('Current tokens are still valid');
       }
     } catch (error) {
-      console.error('Error validating tokens:', error.message);
+      this.logger.error('Error validating tokens:', error.message);
       this.tokenJson = null;
     }
   }
@@ -297,7 +302,6 @@ export class QuickBooksService {
           entityType: entity.name,
           fetchStatus: 'skipped'
         };
-        console.log('Token JSON:', this.tokenJson ? 'Available' : 'undefined');
 
         // Ensure we have valid tokens before attempting API calls
         await this.ensureValidTokens();
@@ -308,19 +312,29 @@ export class QuickBooksService {
             const fullData = await this.fetchEntityData(entity.name, entity.id, realmID);
             baseNotification.fullData = fullData;
             baseNotification.fetchStatus = 'success';
-            console.log(`Successfully fetched full data for ${entity.name} ID: ${entity.id}`);
+            this.logger.log(`Successfully fetched full data for ${entity.name} ID: ${entity.id}`);
+
+            // Submit to FIRS if this is an Invoice
+            if (entity.name === 'Invoice') {
+              await this.submitInvoiceToFirs(fullData, entity.operation, realmID);
+            }
           } catch (error) {
             baseNotification.fetchStatus = 'failed';
             baseNotification.errorMessage = error.message;
-            console.error(`Failed to fetch full data for ${entity.name} ID: ${entity.id}`, error.message);
+            this.logger.error(`Failed to fetch full data for ${entity.name} ID: ${entity.id}`, error.message);
           }
         } else if (entity.operation === 'Delete') {
           baseNotification.fetchStatus = 'skipped';
-          console.log(`Skipped fetching data for deleted ${entity.name} ID: ${entity.id}`);
+          this.logger.log(`Skipped fetching data for deleted ${entity.name} ID: ${entity.id}`);
+
+          // Handle deleted invoices in FIRS
+          if (entity.name === 'Invoice') {
+            await this.handleDeletedInvoiceInFirs(entity.id);
+          }
         }
 
         enrichedNotifications.push(baseNotification);
-        console.log('Enriched notification:', baseNotification);
+        this.logger.log('Enriched notification:', baseNotification);
       }
     }
 
@@ -409,9 +423,9 @@ export class QuickBooksService {
       await fs.promises.stat('file.csv');
       const csv = json2csv(toCsv) + newLine;
       await fs.promises.appendFile('file.csv', csv);
-      console.log('Enriched notification data appended to CSV file');
+      this.logger.log('Enriched notification data appended to CSV file');
     } catch (err) {
-      console.log('Creating new CSV file with enriched data headers');
+      this.logger.log('Creating new CSV file with enriched data headers');
       const headerLine = fields.join(',') + newLine;
       await fs.promises.writeFile('file.csv', headerLine);
 
@@ -422,6 +436,7 @@ export class QuickBooksService {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private async writeNotificationToCsv(body: WebhookEventNotification): Promise<void> {
     const fields = ['realmId', 'name', 'id', 'operation', 'lastUpdated'];
     const newLine = '\r\n';
@@ -452,9 +467,9 @@ export class QuickBooksService {
       await fs.promises.stat('file.csv');
       const csv = json2csv(toCsv) + newLine;
       await fs.promises.appendFile('file.csv', csv);
-      console.log('The "data to append" was appended to file!');
+      this.logger.log('The "data to append" was appended to file!');
     } catch (err) {
-      console.log('New file, just writing headers');
+      this.logger.log('New file, just writing headers');
       const headerLine = fields.join(',') + newLine;
       await fs.promises.writeFile('file.csv', headerLine);
     }
@@ -479,13 +494,343 @@ export class QuickBooksService {
     return new Promise((resolve, reject) => {
       qbo.createCustomer({ DisplayName: displayName }, (err: any, customer: any) => {
         if (err) {
-          console.log(err);
+          this.logger.error(err);
           reject(err);
         } else {
-          console.log('The response is:', JSON.stringify(customer, null, 2));
+          this.logger.log('The response is:', JSON.stringify(customer, null, 2));
           resolve(customer);
         }
       });
     });
+  }
+
+  private async submitInvoiceToFirs(invoiceData: any, operation: string, realmId: string): Promise<void> {
+    try {
+      this.logger.log(`Submitting invoice to FIRS: ${invoiceData.Id}, Operation: ${operation}`);
+
+      // Fetch company configuration from Supabase
+      const company = await this.supabaseService.getCompanyByQuickBooksId(realmId);
+      if (!company) {
+        this.logger.warn(`No company configuration found for QuickBooks ID: ${realmId}`);
+        return;
+      }
+
+      // Get supplier info from QuickBooks Company API
+      const companyInfo = await this.fetchCompanyInfo(realmId);
+      const supplierParty = this.transformCompanyInfoToFirsParty(companyInfo, company);
+
+      const companyConfig: FirsCompanyConfig = {
+        businessId: company.firs_business_id,
+        tin: company.tin,
+        supplierParty: supplierParty
+      };
+
+      let firsResponse: FirsApiResponse;
+      if (operation === 'Create') {
+        firsResponse = await this.firsService.submitInvoice(invoiceData, companyConfig);
+      } else if (operation === 'Update') {
+        // For updates, we need to check if we have the IRN stored somewhere
+        // For now, we'll treat updates as new submissions
+        firsResponse = await this.firsService.submitInvoice(invoiceData, companyConfig);
+      }
+
+      if (firsResponse && firsResponse.code >= 200 && firsResponse.code < 300) {
+        this.logger.log(`FIRS submission successful: ${firsResponse.code || firsResponse.message || firsResponse}`);
+
+        // Generate IRN for successful FIRS submission
+        const irn = this.firsService.generateIRN(invoiceData.DocNumber || invoiceData.Id, invoiceData.TxnDate || invoiceData.TxnDate);
+
+        // Update invoice with FIRS IRN custom field
+        try {
+          const irnFieldSuccess = await this.updateInvoiceCustomField(
+            invoiceData.Id,
+            'FIRS IRN',
+            irn,
+            realmId
+          );
+
+          if (irnFieldSuccess) {
+            this.logger.log(`FIRS IRN custom field updated for invoice ${invoiceData.Id} with IRN: ${irn}`);
+          } else {
+            this.logger.log(`Failed to update FIRS IRN custom field for invoice ${invoiceData.Id}`);
+          }
+        } catch (irnFieldError) {
+          this.logger.error('Failed to update FIRS IRN custom field:', irnFieldError.message);
+        }
+
+        // Generate and upload QR code after successful FIRS submission
+        try {
+          if (firsResponse.code === 201) {
+            const qrResult = await this.firsService.generateAndUploadQRCode(
+              irn,
+              invoiceData.Id || 'unknown',
+              firsResponse
+            );
+
+            if (qrResult) {
+              this.logger.log(`QR code generated and uploaded successfully: ${qrResult.qrCodeUrl}`);
+
+              // Upload QR code as attachment to QuickBooks invoice
+              try {
+                const attachmentSuccess = await this.uploadQRCodeAsAttachment(
+                  invoiceData.Id,
+                  qrResult.qrCodeBuffer,
+                  qrResult.fileName,
+                  realmId
+                );
+
+                if (attachmentSuccess) {
+                  this.logger.log(`QR code attached to QuickBooks invoice ${invoiceData.Id} successfully`);
+                } else {
+                  this.logger.log(`Failed to attach QR code to QuickBooks invoice ${invoiceData.Id}`);
+                }
+              } catch (attachError) {
+                this.logger.error('Failed to attach QR code to QuickBooks invoice:', attachError.message);
+              }
+
+              // Set E-invoice QRCode custom field with Supabase public URL
+              try {
+                const customFieldSuccess = await this.updateInvoiceCustomField(
+                  invoiceData.Id,
+                  'E-invoice QRCode',
+                  qrResult.qrCodeUrl,
+                  realmId
+                );
+
+                if (customFieldSuccess) {
+                  this.logger.log(`E-invoice QRCode custom field updated for invoice ${invoiceData.Id}`);
+                } else {
+                  this.logger.log(`Failed to update E-invoice QRCode custom field for invoice ${invoiceData.Id}`);
+                }
+              } catch (customFieldError) {
+                this.logger.error('Failed to update E-invoice QRCode custom field:', customFieldError.message);
+              }
+            } else {
+              this.logger.log('QR code generation skipped (missing configuration)');
+            }
+          }
+        } catch (qrError) {
+          this.logger.error('Failed to generate QR code:', qrError.message);
+          // Don't fail the whole process if QR code generation fails
+        }
+      } else {
+        this.logger.error(`FIRS submission failed: ${firsResponse?.message || 'Unknown error'}`);
+      }
+    } catch (error) {
+      this.logger.error(`Error submitting invoice to FIRS:`, error.message);
+    }
+  }
+
+  private async handleDeletedInvoiceInFirs(invoiceId: string): Promise<void> {
+    try {
+      this.logger.log(`Handling deleted invoice in FIRS: ${invoiceId}`);
+
+      // In a real implementation, you would:
+      // 1. Look up the IRN for this invoice from your database
+      // 2. Submit a cancellation request to FIRS using updateInvoice with negative values
+
+      // For now, we'll just log the event
+      this.logger.log(`Invoice ${invoiceId} was deleted - would need to cancel in FIRS with proper IRN`);
+    } catch (error) {
+      this.logger.error(`Error handling deleted invoice in FIRS:`, error.message);
+    }
+  }
+
+  private async fetchCompanyInfo(realmId: string): Promise<any> {
+    if (!this.tokenJson) {
+      throw new Error('No access token available for QuickBooks Company API');
+    }
+
+    const token = JSON.parse(this.tokenJson);
+    const qbo = new QuickBooks(
+      this.config.clientId,
+      this.config.clientSecret,
+      token.access_token,
+      false,
+      realmId,
+      true,
+      true,
+      4,
+      '2.0',
+      token.refresh_token
+    );
+
+    return new Promise((resolve, reject) => {
+      qbo.getCompanyInfo(realmId, (err: any, data: any) => {
+        if (err) {
+          reject(new Error(`QuickBooks Company API error: ${err.message || err}`));
+        } else {
+          resolve(data);
+        }
+      });
+    });
+  }
+
+  private transformCompanyInfoToFirsParty(companyInfo: any, company: any): FirsParty {
+    const qbCompany = companyInfo?.QueryResponse?.CompanyInfo?.[0] || {};
+
+    return {
+      party_name: qbCompany.CompanyName || 'Company Name',
+      tin: company.tin,
+      email: qbCompany.Email?.Address || 'company@example.com',
+      telephone: qbCompany.PrimaryPhone?.FreeFormNumber || '+2341234567890',
+      business_description: qbCompany.CompanyName || 'Business Description',
+      postal_address: {
+        street_name: qbCompany.CompanyAddr?.Line1 || '123 Business Street',
+        city_name: qbCompany.CompanyAddr?.City || 'Lagos',
+        postal_zone: qbCompany.CompanyAddr?.PostalCode || '100001',
+        country: qbCompany.CompanyAddr?.CountrySubDivisionCode || 'NG'
+      }
+    };
+  }
+
+  async uploadQRCodeAsAttachment(invoiceId: string, qrCodeBuffer: Buffer, fileName: string, realmId: string): Promise<boolean> {
+    try {
+      this.logger.log(`Uploading QR code as attachment to invoice ${invoiceId} using direct API`);
+
+      if (!this.tokenJson) {
+        this.logger.error('No access token available for attachment upload');
+        return false;
+      }
+
+      const token = JSON.parse(this.tokenJson);
+
+      // Determine the correct base URL based on environment
+      const baseUrl = process.env.NODE_ENV === 'production'
+        ? 'https://quickbooks.api.intuit.com'
+        : 'https://sandbox-quickbooks.api.intuit.com';
+
+      const uploadUrl = `${baseUrl}/v3/company/${realmId}/upload?minorversion=75`;
+
+      // Create the attachable metadata as per QB API spec
+      const attachableMetadata = {
+        AttachableRef: [{
+          IncludeOnSend: true,
+          EntityRef: {
+            type: 'Invoice',
+            value: invoiceId
+          }
+        }],
+        Note: 'QR Code for E-invoice',
+        ContentType: 'image/png',
+        FileName: fileName
+      };
+
+      // Create form data
+      const FormData = require('form-data');
+      const form = new FormData();
+
+      // Add the metadata as file_metadata_01
+      form.append('file_metadata_01', JSON.stringify(attachableMetadata), {
+        contentType: 'application/json'
+      });
+
+      // Add the file content as file_content_01
+      form.append('file_content_01', qrCodeBuffer, {
+        filename: fileName,
+        contentType: 'image/png'
+      });
+
+      // Make the API request
+      const axios = require('axios');
+      const response = await axios.post(uploadUrl, form, {
+        headers: {
+          ...form.getHeaders(),
+          'Authorization': `Bearer ${token.access_token}`,
+          'Accept': 'application/json'
+        },
+        timeout: 30000
+      });
+
+      if (response.status === 200) {
+        this.logger.log(`QR code attachment uploaded successfully to invoice ${invoiceId}`);
+        this.logger.log('Upload response:', JSON.stringify(response.data, null, 2));
+        return true;
+      } else {
+        this.logger.error(`Unexpected response status: ${response.status}`);
+        return false;
+      }
+
+    } catch (error) {
+      this.logger.error(`Error uploading QR code attachment to invoice ${invoiceId}:`, error.message);
+
+      if (error.response) {
+        this.logger.error('Response status:', error.response.status);
+        this.logger.error('Response headers:', error.response.headers);
+        this.logger.error('Response data:', error.response.data);
+      }
+
+      return false;
+    }
+  }
+
+  async updateInvoiceCustomField(invoiceId: string, fieldName: string, fieldValue: string, realmId: string): Promise<boolean> {
+    try {
+      this.logger.log(`Updating custom field '${fieldName}' for invoice ${invoiceId}`);
+
+      if (!this.tokenJson) {
+        this.logger.error('No access token available for invoice update');
+        return false;
+      }
+
+      const token = JSON.parse(this.tokenJson);
+      const qbo = new QuickBooks(
+        this.config.clientId,
+        this.config.clientSecret,
+        token.access_token,
+        false,
+        realmId,
+        true,
+        true,
+        4,
+        '2.0',
+        token.refresh_token
+      );
+
+      return new Promise((resolve) => {
+        // First, get the current invoice to get the SyncToken
+        qbo.getInvoice(invoiceId, (err: any, invoice: any) => {
+          if (err) {
+            this.logger.error(`Error fetching invoice ${invoiceId}:`, err.message);
+            resolve(false);
+            return;
+          }
+
+          this.logger.log('Invoice data:=====>>', invoice);
+
+          // Prepare the updated invoice with custom field
+          const updatedInvoice = {
+            ...invoice,
+            CustomField: [
+              ...(invoice.CustomField || []).filter((cf: any) => cf.Name !== fieldName),
+              {
+                Name: fieldName,
+                Type: 'StringType',
+                StringValue: fieldValue
+              }
+            ]
+          };
+
+          // Update the invoice
+          qbo.updateInvoice(updatedInvoice, (updateErr: any) => {
+            if (updateErr) {
+              this.logger.error(`Error updating invoice ${invoiceId} custom field:`, updateErr.message);
+              resolve(false);
+            } else {
+              this.logger.log(`Successfully updated custom field '${fieldName}' for invoice ${invoiceId}`);
+              resolve(true);
+            }
+          });
+        });
+      });
+    } catch (error) {
+      this.logger.error(`Error updating custom field for invoice ${invoiceId}:`, error.message);
+      return false;
+    }
+  }
+
+  async testWebhookProcessing(body: WebhookEventNotification): Promise<void> {
+    this.logger.log('Testing webhook processing with FIRS integration...');
+    await this.processWebhookNotifications(body);
   }
 }

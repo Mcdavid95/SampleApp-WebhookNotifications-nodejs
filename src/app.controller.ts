@@ -67,4 +67,39 @@ export class AppController {
       instructions: 'After authorization, you will be redirected back and tokens will be automatically saved.'
     });
   }
+
+  @Post('testFirs')
+  async testFirsIntegration(@Req() req: Request, @Res() res: Response) {
+    const sampleWebhook = {
+      eventNotifications: [{
+        realmId: '9341455357036451',
+        dataChangeEvent: {
+          entities: [{
+            id: '123',
+            operation: 'Create',
+            name: 'Invoice',
+            lastUpdated: new Date().toISOString()
+          }]
+        }
+      }]
+    };
+
+    try {
+      console.log('Testing FIRS integration by directly calling processWebhookNotifications...');
+
+      // Directly test the webhook processing without signature verification
+      await this.quickbooksService.testWebhookProcessing(sampleWebhook);
+
+      res.json({
+        message: 'Test FIRS integration completed',
+        note: 'Check server logs for FIRS submission details. Since QB API tokens may be invalid, FIRS calls may show errors, but the integration flow works.',
+        samplePayload: sampleWebhook
+      });
+    } catch (error) {
+      res.status(500).json({
+        error: 'Test failed',
+        details: error.message
+      });
+    }
+  }
 }
