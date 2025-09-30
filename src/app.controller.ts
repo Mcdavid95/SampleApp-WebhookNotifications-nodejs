@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Render, Req, Res, Session } from '@nestjs/common';
+import { Controller, Get, Post, Body, Render, Req, Res, Session, Query } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { AppService } from './app.service';
 import { QuickBooksService } from './quickbooks/quickbooks.service';
@@ -100,6 +100,81 @@ export class AppController {
         error: 'Test failed',
         details: error.message
       });
+    }
+  }
+
+  @Get('custom-fields')
+  async getCustomFields(
+    @Query('realmId') realmId?: string,
+    @Query('entityType') entityType?: string,
+    @Res() res?: Response
+  ) {
+    try {
+      const customFields = await this.quickbooksService.getCustomFieldDefinitions(realmId, entityType);
+
+      if (res) {
+        res.json({
+          success: true,
+          data: customFields,
+          message: `Found ${customFields.length} custom field definitions`
+        });
+      }
+
+      return {
+        success: true,
+        data: customFields,
+        message: `Found ${customFields.length} custom field definitions`
+      };
+    } catch (error) {
+      const errorResponse = {
+        success: false,
+        error: error.message,
+        message: 'Failed to fetch custom field definitions'
+      };
+
+      if (res) {
+        res.status(500).json(errorResponse);
+        return;
+      }
+
+      return errorResponse;
+    }
+  }
+
+  @Get('custom-fields/invoice')
+  async getInvoiceCustomFields(
+    @Query('realmId') realmId?: string,
+    @Res() res?: Response
+  ) {
+    try {
+      const customFields = await this.quickbooksService.getInvoiceCustomFieldDefinitions(realmId);
+
+      if (res) {
+        res.json({
+          success: true,
+          data: customFields,
+          message: `Found ${customFields.length} invoice custom field definitions`
+        });
+      }
+
+      return {
+        success: true,
+        data: customFields,
+        message: `Found ${customFields.length} invoice custom field definitions`
+      };
+    } catch (error) {
+      const errorResponse = {
+        success: false,
+        error: error.message,
+        message: 'Failed to fetch invoice custom field definitions'
+      };
+
+      if (res) {
+        res.status(500).json(errorResponse);
+        return;
+      }
+
+      return errorResponse;
     }
   }
 }

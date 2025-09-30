@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { Company, CreateCompanyDto, UpdateCompanyDto, DatabaseError } from '../types/company.types';
+import { Company, CreateCompanyDto, CreateCompanyDataDto, UpdateCompanyDto, DatabaseError } from '../types/company.types';
 
 @Injectable()
 export class SupabaseService {
@@ -19,7 +19,7 @@ export class SupabaseService {
     this.logger.log('Supabase client initialized');
   }
 
-  async createCompany(companyData: CreateCompanyDto): Promise<Company> {
+  async createCompany(companyData: CreateCompanyDataDto): Promise<Company> {
     this.logger.log(`Creating company with QB ID: ${companyData.quickbooks_company_id}`);
 
     const { data, error } = await this.supabase
@@ -28,6 +28,8 @@ export class SupabaseService {
         quickbooks_company_id: companyData.quickbooks_company_id,
         firs_business_id: companyData.firs_business_id,
         tin: companyData.tin,
+        service_id: companyData.service_id,
+        entity_id: companyData.entity_id,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       }])
@@ -200,6 +202,41 @@ export class SupabaseService {
       return urlData.publicUrl;
     } catch (error) {
       this.logger.error('Failed to upload QR code:', error);
+      throw error;
+    }
+  }
+
+  async uploadFile(buffer: Buffer, fileName: string, bucketName: string = 'FIRS-QBO', contentType?: string): Promise<string> {
+    this.logger.log(`Uploading file: ${fileName} to bucket: ${bucketName}`);
+
+    try {
+      const { data, error } = await this.supabase.storage
+        .from(bucketName)
+        .upload(fileName, buffer, {
+          contentType: contentType || 'application/octet-stream',
+          upsert: true
+        });
+
+      if (error) {
+        this.logger.error('Error uploading file:', error);
+
+        // Provide specific guidance for RLS policy errors
+        if (error.message.includes('row-level security policy') || error.message.includes('RLS')) {
+          throw new Error(`Failed to upload file due to Row Level Security policy. Please configure storage policies for bucket '${bucketName}'. See SETUP_GUIDE.md for instructions.`);
+        }
+
+        throw new Error(`Failed to upload file: ${error.message}`);
+      }
+
+      // Get public URL
+      const { data: urlData } = this.supabase.storage
+        .from(bucketName)
+        .getPublicUrl(fileName);
+
+      this.logger.log(`File uploaded successfully: ${urlData.publicUrl}`);
+      return urlData.publicUrl;
+    } catch (error) {
+      this.logger.error('Failed to upload file:', error);
       throw error;
     }
   }

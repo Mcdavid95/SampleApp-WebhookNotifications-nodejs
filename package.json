@@ -26,8 +26,11 @@
     "@nestjs/platform-express": "^10.0.0",
     "@nestjs/serve-static": "^4.0.0",
     "@supabase/supabase-js": "^2.57.4",
+    "@types/amqplib": "^0.10.7",
     "@types/form-data": "^2.2.1",
+    "@types/multer": "^2.0.0",
     "@types/qrcode": "^1.5.5",
+    "amqplib": "^0.10.9",
     "axios": "^1.12.2",
     "body-parser": "latest",
     "csrf": "^3.0.4",
@@ -44,7 +47,8 @@
     "query-string": "^5.0.1",
     "reflect-metadata": "^0.1.13",
     "request": "^2.78.0",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",

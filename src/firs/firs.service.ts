@@ -2,11 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
 import * as QRCode from 'qrcode';
 import { FirsInvoiceRequest, FirsApiResponse, FirsParty } from '../types/firs.types';
+import { FirsEntityResponse } from '../types/company.types';
 import { SupabaseService } from '../supabase/supabase.service';
 
 export interface FirsCompanyConfig {
   businessId: string;
   tin: string;
+  serviceId: string;
   supplierParty: FirsParty;
 }
 
@@ -28,6 +30,25 @@ export class FirsService {
     });
   }
 
+  async getEntity(entityId: string): Promise<FirsEntityResponse> {
+    try {
+      this.logger.log(`Fetching entity from FIRS: ${entityId}`);
+
+      const response = await this.httpClient.get(`/api/Firs/GetEntity/${entityId}`);
+
+      this.logger.log(`FIRS entity fetch successful for ID ${entityId}`);
+      return response.data;
+    } catch (error) {
+      this.logger.error(`FIRS entity fetch failed for ID ${entityId}:`, error.response?.data || error.message);
+
+      if (error.response?.data) {
+        throw new Error(`FIRS API error: ${JSON.stringify(error.response.data)}`);
+      }
+
+      throw new Error(`Failed to fetch entity: ${error.message}`);
+    }
+  }
+
   async submitInvoice(invoiceData: any, companyConfig: FirsCompanyConfig): Promise<FirsApiResponse> {
     try {
       this.logger.log(`Submitting invoice to FIRS: ${invoiceData.Id || 'Unknown'}`);
@@ -36,7 +57,8 @@ export class FirsService {
 
       const response = await this.httpClient.post('/api/Firs/SignInvoice', firsInvoice);
 
-      this.logger.log(`FIRS submission successful for invoice ${invoiceData.Id}: ${response.data.reference}`);
+      this.logger.log(`FIRS submission successful for invoice ${invoiceData.Id}: ${response.data}`);
+      console.log(response.data);
       return response.data;
     } catch (error) {
       this.logger.error(`FIRS submission failed for invoice ${invoiceData.Id || 'Unknown'}:`, error.response?.data || error.message);
@@ -81,7 +103,7 @@ export class FirsService {
   private transformQBInvoiceToFirs(qbInvoice: any, companyConfig: FirsCompanyConfig, isUpdate: boolean = false): FirsInvoiceRequest {
     const issueDate = this.formatDate(qbInvoice.TxnDate || new Date().toISOString());
     const dueDate = this.formatDate(qbInvoice.DueDate || this.addDaysToDate(issueDate, 30));
-    const irn = this.generateIRN(qbInvoice.DocNumber || qbInvoice.Id, issueDate);
+    const irn = this.generateIRN(qbInvoice.DocNumber || qbInvoice.Id, issueDate, companyConfig.serviceId);
 
     // Calculate totals
     const lineExtensionAmount = parseFloat(qbInvoice.TotalAmt || 0);
@@ -210,9 +232,9 @@ export class FirsService {
     return balanceNum > 0 ? 'PENDING' : 'PAID';
   }
 
-  public generateIRN(docNumber: string, issueDate: string): string {
+  public generateIRN(docNumber: string, issueDate: string, serviceId: string = 'B06E99DC'): string {
     const dateStr = issueDate.replace(/-/g, '');
-    return `${docNumber}-94019CE5-${dateStr}`;
+    return `${docNumber}-${serviceId}-${dateStr}`;
   }
 
   private formatDate(dateInput: string | Date): string {

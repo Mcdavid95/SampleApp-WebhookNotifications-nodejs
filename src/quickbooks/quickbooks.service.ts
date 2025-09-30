@@ -12,6 +12,8 @@ import { QuickBooksConfig, WebhookEventNotification, NotificationRecord } from '
 import { FirsService, FirsCompanyConfig } from '../firs/firs.service';
 import { FirsApiResponse, FirsParty } from '../types/firs.types';
 import { SupabaseService } from '../supabase/supabase.service';
+import { CustomFieldDefinition, CustomFieldDefinitionsResponse, GraphQLResponse } from '../types/custom-field.types';
+import axios from 'axios';
 
 @Injectable()
 export class QuickBooksService {
@@ -21,6 +23,7 @@ export class QuickBooksService {
   private webhookPayload: any;
   private csrf = new (Tokens as any)();
   private readonly logger = new Logger(QuickBooksService.name);
+  private qboClient: any = null;
 
   constructor(
     private readonly firsService: FirsService,
@@ -242,6 +245,7 @@ export class QuickBooksService {
       .digest('base64');
 
     if (signature === hash) {
+      this.logger.verbose(body);
       await this.processWebhookNotifications(body);
       return { status: 200, message: 'SUCCESS' };
     }
@@ -285,6 +289,34 @@ export class QuickBooksService {
     }
   }
 
+  private getQuickBooksClient(realmId?: string): any {
+    if (!this.tokenJson) {
+      throw new Error('No access token available for QuickBooks API');
+    }
+
+    const token = JSON.parse(this.tokenJson);
+    const currentRealmId = realmId || this.realmId;
+
+    // Create or update the client if needed
+    if (!this.qboClient || this.qboClient.realmId !== currentRealmId) {
+      this.qboClient = new QuickBooks(
+        this.config.clientId,
+        this.config.clientSecret,
+        token.access_token,
+        false, // sandbox mode
+        currentRealmId,
+        true,
+        true,
+        4,
+        '2.0',
+        token.refresh_token
+      );
+      this.qboClient.realmId = currentRealmId; // Store realm ID for comparison
+    }
+
+    return this.qboClient;
+  }
+
   private async processWebhookNotifications(body: WebhookEventNotification): Promise<void> {
     const enrichedNotifications: NotificationRecord[] = [];
 
@@ -309,14 +341,28 @@ export class QuickBooksService {
         // Only fetch full data for non-delete operations
         if (entity.operation !== 'Delete' && this.tokenJson) {
           try {
-            const fullData = await this.fetchEntityData(entity.name, entity.id, realmID);
-            baseNotification.fullData = fullData;
-            baseNotification.fetchStatus = 'success';
-            this.logger.log(`Successfully fetched full data for ${entity.name} ID: ${entity.id}`);
 
             // Submit to FIRS if this is an Invoice
             if (entity.name === 'Invoice') {
+              const fullData = await this.fetchEntityData(entity.name, entity.id, realmID);
+              baseNotification.fullData = fullData;
+              baseNotification.fetchStatus = 'success';
+              this.logger.log(`Successfully fetched full data for ${entity.name} ID: ${entity.id}`);
+
+              enrichedNotifications.push(baseNotification);
+              this.logger.log('Enriched notification:', baseNotification);
               await this.submitInvoiceToFirs(fullData, entity.operation, realmID);
+            }
+            // Handle Payment creation to update FIRS invoice payment status
+            else if (entity.name === 'Payment' && entity.operation === 'Create') {
+              const paymentData = await this.fetchEntityData(entity.name, entity.id, realmID);
+              baseNotification.fullData = paymentData;
+              baseNotification.fetchStatus = 'success';
+              this.logger.log(`Successfully fetched full data for ${entity.name} ID: ${entity.id}`);
+
+              enrichedNotifications.push(baseNotification);
+              this.logger.log('Enriched notification:', baseNotification);
+              await this.handlePaymentCreation(paymentData, realmID);
             }
           } catch (error) {
             baseNotification.fetchStatus = 'failed';
@@ -332,9 +378,6 @@ export class QuickBooksService {
             await this.handleDeletedInvoiceInFirs(entity.id);
           }
         }
-
-        enrichedNotifications.push(baseNotification);
-        this.logger.log('Enriched notification:', baseNotification);
       }
     }
 
@@ -342,23 +385,7 @@ export class QuickBooksService {
   }
 
   private async fetchEntityData(entityName: string, entityId: string, realmId: string): Promise<any> {
-    if (!this.tokenJson) {
-      throw new Error('No access token available');
-    }
-
-    const token = JSON.parse(this.tokenJson);
-    const qbo = new QuickBooks(
-      this.config.clientId,
-      this.config.clientSecret,
-      token.access_token,
-      false,
-      realmId,
-      true,
-      true,
-      4,
-      '2.0',
-      token.refresh_token
-    );
+    const qbo = this.getQuickBooksClient(realmId);
 
     return new Promise((resolve, reject) => {
       // Map entity names to QuickBooks API methods
@@ -476,20 +503,7 @@ export class QuickBooksService {
   }
 
   async createCustomer(displayName: string): Promise<any> {
-    const token = JSON.parse(this.tokenJson);
-
-    const qbo = new QuickBooks(
-      this.config.clientId,
-      this.config.clientSecret,
-      token.access_token,
-      false,
-      this.realmId,
-      true,
-      true,
-      4,
-      '2.0',
-      token.refresh_token
-    );
+    const qbo = this.getQuickBooksClient();
 
     return new Promise((resolve, reject) => {
       qbo.createCustomer({ DisplayName: displayName }, (err: any, customer: any) => {
@@ -522,23 +536,26 @@ export class QuickBooksService {
       const companyConfig: FirsCompanyConfig = {
         businessId: company.firs_business_id,
         tin: company.tin,
+        serviceId: company.service_id,
         supplierParty: supplierParty
       };
+
+      // Generate IRN for successful FIRS submission
+      const irn = this.firsService.generateIRN(invoiceData.DocNumber || invoiceData.Id, invoiceData.TxnDate || invoiceData.TxnDate, company.service_id);
 
       let firsResponse: FirsApiResponse;
       if (operation === 'Create') {
         firsResponse = await this.firsService.submitInvoice(invoiceData, companyConfig);
       } else if (operation === 'Update') {
-        // For updates, we need to check if we have the IRN stored somewhere
-        // For now, we'll treat updates as new submissions
-        firsResponse = await this.firsService.submitInvoice(invoiceData, companyConfig);
+        firsResponse = await this.firsService.updateInvoice(invoiceData, irn, companyConfig);
+      } else if (operation === 'Void') {
+        // Void operations should be sent to FIRS with REJECTED status
+        this.logger.log(`Processing Void operation for invoice ${invoiceData.Id} - setting FIRS status to REJECTED`);
+        firsResponse = await this.firsService.updateInvoice(invoiceData, irn, companyConfig);
       }
 
       if (firsResponse && firsResponse.code >= 200 && firsResponse.code < 300) {
         this.logger.log(`FIRS submission successful: ${firsResponse.code || firsResponse.message || firsResponse}`);
-
-        // Generate IRN for successful FIRS submission
-        const irn = this.firsService.generateIRN(invoiceData.DocNumber || invoiceData.Id, invoiceData.TxnDate || invoiceData.TxnDate);
 
         // Update invoice with FIRS IRN custom field
         try {
@@ -636,24 +653,97 @@ export class QuickBooksService {
     }
   }
 
+  private async handlePaymentCreation(paymentData: any, realmId: string): Promise<void> {
+    try {
+      this.logger.log(`Handling payment creation: ${paymentData.Id}`);
+
+      // Check if payment has attached invoices
+      if (!paymentData.Line || paymentData.Line.length === 0) {
+        this.logger.log(`Payment ${paymentData.Id} has no line items - skipping FIRS update`);
+        return;
+      }
+
+      // Process each line item to find invoice references
+      for (const line of paymentData.Line) {
+        if (line.LinkedTxn && line.LinkedTxn.length > 0) {
+          for (const linkedTxn of line.LinkedTxn) {
+            if (linkedTxn.TxnType === 'Invoice') {
+              await this.updateFirsInvoicePaymentStatus(linkedTxn.TxnId, paymentData, realmId);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Error handling payment creation:`, error.message);
+    }
+  }
+
+  private async updateFirsInvoicePaymentStatus(invoiceId: string, paymentData: any, realmId: string): Promise<void> {
+    try {
+      this.logger.log(`Updating FIRS payment status for invoice ${invoiceId} with payment ${paymentData.Id}`);
+
+      // Fetch the current invoice data
+      const invoiceData = await this.fetchEntityData('Invoice', invoiceId, realmId);
+      if (!invoiceData) {
+        this.logger.warn(`Could not fetch invoice data for ID: ${invoiceId}`);
+        return;
+      }
+
+      // Get company configuration
+      const company = await this.supabaseService.getCompanyByQuickBooksId(realmId);
+      if (!company) {
+        this.logger.warn(`No company configuration found for QuickBooks ID: ${realmId}`);
+        return;
+      }
+
+      // Generate IRN for the invoice (same as used during invoice submission)
+      const irn = this.firsService.generateIRN(
+        invoiceData.DocNumber || invoiceData.Id,
+        invoiceData.TxnDate || invoiceData.TxnDate,
+        company.service_id
+      );
+
+      // Check if invoice is fully paid
+      const totalAmount = parseFloat(invoiceData.TotalAmt || 0);
+      const balance = parseFloat(invoiceData.Balance || 0);
+      const isPaid = balance <= 0;
+
+      this.logger.log(`Invoice ${invoiceId} - Total: ${totalAmount}, Balance: ${balance}, Paid: ${isPaid}`);
+
+      // Update FIRS record with payment status
+      // Note: This would typically involve calling a FIRS API endpoint to update payment status
+      // For now, we'll log the action that would be taken
+      this.logger.log(`Would update FIRS record with IRN ${irn} to payment status: ${isPaid ? 'PAID' : 'PARTIAL'}`);
+
+      // Store payment information for future reference
+      await this.logPaymentEvent(invoiceId, irn, paymentData, isPaid);
+
+    } catch (error) {
+      this.logger.error(`Error updating FIRS invoice payment status:`, error.message);
+    }
+  }
+
+  private async logPaymentEvent(invoiceId: string, irn: string, paymentData: any, isPaid: boolean): Promise<void> {
+    const paymentEvent = {
+      timestamp: new Date().toISOString(),
+      invoiceId: invoiceId,
+      paymentId: paymentData.Id,
+      irn: irn,
+      paymentAmount: paymentData.TotalAmt,
+      paymentMethod: paymentData.PaymentMethodRef?.name || 'Unknown',
+      isPaid: isPaid,
+      message: `Payment ${paymentData.Id} applied to invoice ${invoiceId} (IRN: ${irn})`
+    };
+
+    this.logger.log('Payment event logged:', JSON.stringify(paymentEvent, null, 2));
+  }
+
   private async fetchCompanyInfo(realmId: string): Promise<any> {
     if (!this.tokenJson) {
       throw new Error('No access token available for QuickBooks Company API');
     }
 
-    const token = JSON.parse(this.tokenJson);
-    const qbo = new QuickBooks(
-      this.config.clientId,
-      this.config.clientSecret,
-      token.access_token,
-      false,
-      realmId,
-      true,
-      true,
-      4,
-      '2.0',
-      token.refresh_token
-    );
+    const qbo = this.getQuickBooksClient(realmId);
 
     return new Promise((resolve, reject) => {
       qbo.getCompanyInfo(realmId, (err: any, data: any) => {
@@ -773,19 +863,7 @@ export class QuickBooksService {
         return false;
       }
 
-      const token = JSON.parse(this.tokenJson);
-      const qbo = new QuickBooks(
-        this.config.clientId,
-        this.config.clientSecret,
-        token.access_token,
-        false,
-        realmId,
-        true,
-        true,
-        4,
-        '2.0',
-        token.refresh_token
-      );
+      const qbo = this.getQuickBooksClient(realmId);
 
       return new Promise((resolve) => {
         // First, get the current invoice to get the SyncToken
@@ -832,5 +910,116 @@ export class QuickBooksService {
   async testWebhookProcessing(body: WebhookEventNotification): Promise<void> {
     this.logger.log('Testing webhook processing with FIRS integration...');
     await this.processWebhookNotifications(body);
+  }
+
+  async getCustomFieldDefinitions(realmId?: string, entityType?: string): Promise<CustomFieldDefinition[]> {
+    try {
+      const currentRealmId = realmId || this.realmId;
+      if (!currentRealmId) {
+        throw new Error('Realm ID is required');
+      }
+
+      this.logger.log(`Fetching custom field definitions for realm: ${currentRealmId}`);
+
+      const query = `
+        query GetCustomFieldDefinitions($entityType: [String]) {
+          company {
+            appFoundationsCustomFieldDefinitions(
+              first: 100
+              filter: {
+                entityType: $entityType
+                isActive: true
+              }
+            ) {
+              edges {
+                node {
+                  id
+                  name
+                  dataType
+                  entityTypes
+                  isRequired
+                  isActive
+                  allowedValues
+                }
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+        }
+      `;
+
+      const variables = entityType ? { entityType: [entityType] } : {};
+
+      const response = await this.executeGraphQLQuery<CustomFieldDefinitionsResponse>(
+        query,
+        variables,
+        currentRealmId
+      );
+
+      const customFields = response.data.data.company.appFoundationsCustomFieldDefinitions.edges.map(
+        (edge: { node: CustomFieldDefinition }) => edge.node
+      );
+
+      this.logger.log(`Found ${customFields.length} custom field definitions`);
+      return customFields;
+
+    } catch (error) {
+      this.logger.error('Error fetching custom field definitions:', error.message);
+      throw new Error(`Failed to fetch custom field definitions: ${error.message}`);
+    }
+  }
+
+  async getInvoiceCustomFieldDefinitions(realmId?: string): Promise<CustomFieldDefinition[]> {
+    return this.getCustomFieldDefinitions(realmId, 'INVOICE');
+  }
+
+  private async executeGraphQLQuery<T>(
+    query: string,
+    variables: any = {},
+    realmId?: string
+  ): Promise<GraphQLResponse<T>> {
+    try {
+      const currentRealmId = realmId || this.realmId;
+      if (!this.tokenJson) {
+        throw new Error('No access token available');
+      }
+
+      const token = JSON.parse(this.tokenJson);
+      const graphqlUrl = `https://qb-sandbox.api.intuit.com/graphql`;
+
+      const response = await axios.post<GraphQLResponse<T>>(
+        graphqlUrl,
+        {
+          query,
+          variables
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${token.access_token}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-QB-Company-ID': currentRealmId
+          },
+          timeout: 30000
+        }
+      );
+
+      if (response.data.errors && response.data.errors.length > 0) {
+        const errorMessage = response.data.errors.map(err => err.message).join(', ');
+        throw new Error(`GraphQL errors: ${errorMessage}`);
+      }
+
+      return response.data;
+
+    } catch (error) {
+      if (error.response) {
+        this.logger.error('GraphQL API error response:', error.response.data);
+        throw new Error(`GraphQL API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+      }
+      throw error;
+    }
   }
 }

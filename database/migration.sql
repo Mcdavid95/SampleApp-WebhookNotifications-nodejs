@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS companies (
     quickbooks_company_id TEXT NOT NULL UNIQUE,
     firs_business_id TEXT NOT NULL,
     tin TEXT NOT NULL UNIQUE,
+    service_id TEXT NOT NULL,
+    entity_id TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -36,10 +38,10 @@ CREATE TRIGGER update_companies_updated_at
 -- Uncomment the lines below to add test data
 
 /*
-INSERT INTO companies (quickbooks_company_id, firs_business_id, tin) VALUES
-('9341455357036451', 'BID123456789', '12345678-0001'),
-('1234567890123456', 'BID987654321', '98765432-0001'),
-('5555555555555555', 'BID555555555', '55555555-0001')
+INSERT INTO companies (quickbooks_company_id, firs_business_id, tin, service_id) VALUES
+('9341455357036451', 'BID123456789', '12345678-0001', 'B06E99DC'),
+('1234567890123456', 'BID987654321', '98765432-0001', 'B06E99DC'),
+('5555555555555555', 'BID555555555', '55555555-0001', 'B06E99DC')
 ON CONFLICT (quickbooks_company_id) DO NOTHING;
 */
 

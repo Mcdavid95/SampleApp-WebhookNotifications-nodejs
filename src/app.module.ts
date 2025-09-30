@@ -7,6 +7,7 @@ import { AppService } from './app.service';
 import { QuickBooksModule } from './quickbooks/quickbooks.module';
 import { FirsModule } from './firs/firs.module';
 import { CompanyModule } from './company/company.module';
+import { BankStatementModule } from './bank-statement/bank-statement.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { CompanyModule } from './company/company.module';
     QuickBooksModule,
     FirsModule,
     CompanyModule,
+    BankStatementModule,
   ],
   controllers: [AppController],
   providers: [AppService],
