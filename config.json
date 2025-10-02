@@ -1,0 +1,32 @@
+{
+  "clientId": "ABhC0gRlmadMzrkd1ehDIz8q8kZoBZ7hyu1Uae1PJkpm4YfjOP",
+  "clientSecret": "R1p9XEXpUFXxCsLAOk9vFvZtpGISVdY9X8kLxspp",
+  "redirectUri": "https://646e111c8df3.ngrok-free.app/callback",
+  "configurationEndpoint": "https://developer.api.intuit.com/.well-known/openid_sandbox_configuration/",
+  "authorization_endpoint":"https://appcenter.intuit.com/connect/oauth2",
+  "token_endpoint":"https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+  "api_uri": "https://quickbooks.api.intuit.com/v3/company/",
+  "scopes": {
+    "sign_in_with_intuit": [
+      "openid",
+      "profile",
+      "email",
+      "phone",
+      "address"
+    ],
+    "connect_to_quickbooks": [
+      "com.intuit.quickbooks.accounting"
+    ],
+    "connect_handler": [
+      "com.intuit.quickbooks.accounting",
+      "com.intuit.quickbooks.payment",
+      "openid",
+      "profile",
+      "email",
+      "phone",
+      "address"
+    ]
+  },
+  "webhookUri": "https://646e111c8df3.ngrok-free.app/webhook",
+  "webhooksVerifier": "2209fcbe-2a80-4bb6-a7d0-9e53ed8f0fba"
+}
